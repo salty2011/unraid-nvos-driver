@@ -3,8 +3,11 @@
 # Nvidia-Driver plugin so it is used on the next boot. Run as root ON the
 # Unraid host.
 #
+#   install-nvos.sh [--reboot]                  (finds the package next to this script)
 #   install-nvos.sh <package.txz> [--reboot]
-#   install-nvos.sh --from-release OWNER/REPO TAG [--reboot]     (needs GITHUB_TOKEN for a private repo)
+#
+# Without a package path it looks for nvos-*-<running kernel>-1.txz in this
+# script's directory and its parent, so it works from an extracted release zip.
 #
 # What it does:
 #   1. verifies the package matches the running kernel and its .md5
@@ -16,12 +19,12 @@
 #   5. optionally reboots (clean array stop via powerdown)
 set -euo pipefail
 
-REBOOT=false; PKG=""; FROM_RELEASE=""; TAG=""
+REBOOT=false; PKG=""
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 while [ $# -gt 0 ]; do
   case "$1" in
     --reboot) REBOOT=true; shift;;
-    --from-release) FROM_RELEASE="$2"; TAG="$3"; shift 3;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0;;
+    -h|--help) sed -n '2,19p' "$0"; exit 0;;
     *) PKG="$1"; shift;;
   esac
 done
@@ -33,22 +36,20 @@ KDIR=${KV%%-*}                      # e.g. 6.18.47
 PLUGIN=/boot/config/plugins/nvidia-driver
 [ -d "$PLUGIN" ] || { echo "Nvidia-Driver plugin not installed (no $PLUGIN); install it from Community Applications first"; exit 1; }
 
-if [ -n "$FROM_RELEASE" ]; then
-  command -v jq >/dev/null || { echo "jq missing"; exit 1; }
-  AUTH=(); [ -n "${GITHUB_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
-  REL=$(curl -sfL "${AUTH[@]}" "https://api.github.com/repos/$FROM_RELEASE/releases/tags/$TAG") || { echo "release $FROM_RELEASE@$TAG not reachable (private repo? export GITHUB_TOKEN)"; exit 1; }
-  NAME=$(echo "$REL" | jq -r ".assets[].name" | grep -E "^nvos-.*-$KV-1\.txz$" | head -1 || true)
-  [ -n "$NAME" ] || { echo "release $TAG has no nvos package for kernel $KV. Assets:"; echo "$REL" | jq -r '.assets[].name'; exit 1; }
-  mkdir -p /tmp/nvos-dl; cd /tmp/nvos-dl
-  for f in "$NAME" "$NAME.md5"; do
-    ID=$(echo "$REL" | jq -r ".assets[] | select(.name==\"$f\") | .id")
-    echo "downloading $f ..."
-    curl -sfL "${AUTH[@]}" -H "Accept: application/octet-stream" -o "$f" "https://api.github.com/repos/$FROM_RELEASE/releases/assets/$ID"
-  done
-  PKG="/tmp/nvos-dl/$NAME"
+if [ -z "$PKG" ]; then
+  mapfile -t FOUND < <(find "$HERE" "$(dirname "$HERE")" -maxdepth 1 -type f -name "nvos-*-$KV-1.txz" 2>/dev/null)
+  case ${#FOUND[@]} in
+    1) PKG=${FOUND[0]};;
+    0) echo "no nvos-*-$KV-1.txz in $HERE or its parent; this release does not match the running kernel $KV"
+       OTHER=$(find "$HERE" "$(dirname "$HERE")" -maxdepth 1 -type f -name "nvos-*.txz" 2>/dev/null)
+       [ -z "$OTHER" ] || { echo "found packages for other kernels:"; echo "$OTHER"; }
+       exit 1;;
+    *) echo "several packages for $KV found; pass the one to install:"; printf '  %s\n' "${FOUND[@]}"; exit 1;;
+  esac
+  echo "using $PKG"
 fi
 
-[ -n "$PKG" ] && [ -f "$PKG" ] || { echo "package file not given or missing"; exit 1; }
+[ -f "$PKG" ] || { echo "package file $PKG missing"; exit 1; }
 BASE=$(basename "$PKG")
 case "$BASE" in
   nvos-*-"$KV"-1.txz) ;;

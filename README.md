@@ -19,24 +19,23 @@ it into the plugin on the Unraid host so the plugin installs it at boot.
 
 ## Quick start: use a prebuilt package
 
-Prebuilt packages are attached to [Releases](../../releases). The package is
-tied to one exact Unraid kernel (`uname -r`); pick the release whose asset
-name ends in your kernel, e.g. `nvos-610.57.04-6.18.47-Unraid-1.txz` for
-Unraid 7.4.0-beta.2.
+Each [release](../../releases) has a zip with the package, its `.md5` and the
+install scripts. The package is tied to one exact Unraid kernel (`uname -r`);
+pick the release whose zip name ends in your kernel, e.g.
+`nvos-610.57.04-6.18.47-Unraid.zip` for Unraid 7.4.0-beta.2.
 
-On the Unraid host, as root:
+Copy the zip to the Unraid host (e.g. `/tmp`), then as root:
 
 ```bash
 # Nvidia-Driver plugin must already be installed (Community Applications).
-# For a private repo, export a GitHub token with read access first.
-export GITHUB_TOKEN=ghp_...
-curl -sfL -H "Authorization: Bearer $GITHUB_TOKEN" -o /tmp/install-nvos.sh \
-  https://raw.githubusercontent.com/salty2011/unraid-nvos-driver/main/install/install-nvos.sh
-bash /tmp/install-nvos.sh --from-release salty2011/unraid-nvos-driver v610.57.04 --reboot
+cd /tmp && unzip nvos-610.57.04-6.18.47-Unraid.zip
+cd nvos-610.57.04-6.18.47-Unraid
+bash install-nvos.sh --reboot
 ```
 
-Or copy the `.txz` and `.md5` to the host yourself and run
-`install-nvos.sh /path/to/nvos-…txz --reboot`.
+`install-nvos.sh` finds the package for the running kernel in its own
+directory or the one above it. To install a package from elsewhere, pass its
+path: `install-nvos.sh /path/to/nvos-…txz --reboot`.
 
 After the reboot:
 
