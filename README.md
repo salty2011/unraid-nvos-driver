@@ -17,32 +17,55 @@ as open modules.
 `build/` produces that package on any Linux box with Docker. `install/` drops
 it into the plugin on the Unraid host so the plugin installs it at boot.
 
-## Quick start: use a prebuilt package
+## Quick start: install a prebuilt package
 
-Each [release](../../releases) has a zip with the package, its `.md5` and the
-install scripts. The package is tied to one exact Unraid kernel (`uname -r`);
-pick the release whose zip name ends in your kernel, e.g.
-`nvos-610.57.04-6.18.47-Unraid.zip` for Unraid 7.4.0-beta.2.
-
-Copy the zip to the Unraid host (e.g. `/tmp`), then as root:
+Packages are tied to one exact Unraid kernel. Check yours first and compare it
+with the [releases](../../releases):
 
 ```bash
-# Nvidia-Driver plugin must already be installed (Community Applications).
-cd /tmp && unzip nvos-610.57.04-6.18.47-Unraid.zip
-cd nvos-610.57.04-6.18.47-Unraid
+uname -r        # e.g. 6.18.52-Unraid
+```
+
+| Driver | Kernel | Release |
+|---|---|---|
+| 615.78.08 | 6.18.52-Unraid | [v615.78.08](../../releases/tag/v615.78.08) |
+| 610.57.04 | 6.18.47-Unraid (Unraid 7.4.0-beta.2) | [v610.57.04-2](../../releases/tag/v610.57.04-2) |
+
+The Nvidia-Driver plugin must already be installed (Community Applications).
+Then, as root on the Unraid host, one command downloads the newest package
+for your kernel, checks its md5, stages it in the plugin and reboots:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/salty2011/unraid-nvos-driver/main/install/install-nvos.sh | bash -s -- --reboot
+```
+
+Leave off `--reboot` to stage it and reboot later. Add `--driver 610.57.04`
+to pick an older driver when a kernel has several. If no release matches
+your kernel, the script says so and changes nothing; build one (below).
+
+**Offline instead:** download the release zip, copy it to the host, and run
+the script from inside it. It uses the package next to it and downloads
+nothing:
+
+```bash
+cd /tmp && unzip nvos-615.78.08-6.18.52-Unraid.zip
+cd nvos-615.78.08-6.18.52-Unraid
 bash install-nvos.sh --reboot
 ```
 
-`install-nvos.sh` finds the package for the running kernel in its own
-directory or the one above it. To install a package from elsewhere, pass its
-path: `install-nvos.sh /path/to/nvos-…txz --reboot`.
+To install a package from elsewhere, pass its path:
+`install-nvos.sh /path/to/nvos-…txz --reboot`.
 
 After the reboot:
 
 ```bash
-bash verify-nvos.sh                 # driver, module license, JSON files
-bash verify-nvos.sh --vulkan-test   # also proves the Vulkan ICD works in a container
+curl -fsSL https://raw.githubusercontent.com/salty2011/unraid-nvos-driver/main/install/verify-nvos.sh | bash -s -- --vulkan-test
 ```
+
+`verify-nvos.sh` checks the driver version, module license and glvnd JSON
+files; `--vulkan-test` also proves the Vulkan ICD works in a container. Then
+recreate any GPU containers (`docker compose up -d --force-recreate`), since a
+plain restart keeps the old driver wiring.
 
 The installer backs up the plugin's previous packages and `settings.cfg` to
 `/boot/config/plugins/nvidia-driver-backup-<timestamp>/`, sets

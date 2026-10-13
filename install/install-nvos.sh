@@ -3,11 +3,17 @@
 # Nvidia-Driver plugin so it is used on the next boot. Run as root ON the
 # Unraid host.
 #
-#   install-nvos.sh [--reboot]                  (finds the package next to this script)
+#   install-nvos.sh [--reboot]                  (local package, else download)
 #   install-nvos.sh <package.txz> [--reboot]
+#   install-nvos.sh --driver 615.78.08 [--reboot]   (pick a driver version)
+#
+# Run straight from GitHub (no clone, no token):
+#   curl -fsSL https://raw.githubusercontent.com/salty2011/unraid-nvos-driver/main/install/install-nvos.sh | bash -s -- --reboot
 #
 # Without a package path it looks for nvos-*-<running kernel>-1.txz in this
-# script's directory and its parent, so it works from an extracted release zip.
+# script's directory and its parent (an extracted release zip). If there is
+# none, it downloads the newest release package for the running kernel from
+# github.com/$NVOS_REPO (default salty2011/unraid-nvos-driver), with its .md5.
 #
 # What it does:
 #   1. verifies the package matches the running kernel and its .md5
@@ -19,12 +25,15 @@
 #   5. optionally reboots (clean array stop via powerdown)
 set -euo pipefail
 
-REBOOT=false; PKG=""
-HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REBOOT=false; PKG=""; WANT_DRV=""
+REPO=${NVOS_REPO:-salty2011/unraid-nvos-driver}
+# Piped through bash there is no script file, so no directory to search.
+HERE=""; [ -f "${BASH_SOURCE[0]:-}" ] && HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 while [ $# -gt 0 ]; do
   case "$1" in
     --reboot) REBOOT=true; shift;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0;;
+    --driver) WANT_DRV="$2"; shift 2;;
+    -h|--help) sed -n '2,26p' "${BASH_SOURCE[0]}" 2>/dev/null || echo "see https://github.com/$REPO"; exit 0;;
     *) PKG="$1"; shift;;
   esac
 done
@@ -36,17 +45,35 @@ KDIR=${KV%%-*}                      # e.g. 6.18.47
 PLUGIN=/boot/config/plugins/nvidia-driver
 [ -d "$PLUGIN" ] || { echo "Nvidia-Driver plugin not installed (no $PLUGIN); install it from Community Applications first"; exit 1; }
 
+download_pkg() {
+  command -v curl >/dev/null || { echo "curl missing"; exit 1; }
+  echo "looking for an nvos package for $KV in github.com/$REPO releases ..."
+  URLS=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100" \
+    | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"(https[^"]*)"$/\1/' \
+    | grep -E "/nvos-[0-9.]+-$KV-1\.txz$" || true)
+  [ -z "$WANT_DRV" ] || URLS=$(grep -F "/nvos-$WANT_DRV-$KV-1.txz" <<<"$URLS" || true)
+  if [ -z "$URLS" ]; then
+    echo "no release package for kernel $KV${WANT_DRV:+ and driver $WANT_DRV} in $REPO."
+    echo "Build one with build/build-nvos.sh --kernel $KV --driver <version>, see https://github.com/$REPO"
+    exit 1
+  fi
+  # Newest driver wins: sort on the version inside the file name.
+  URL=$(sed -E 's|.*/nvos-([0-9.]+)-.*|\1 &|' <<<"$URLS" | sort -V | tail -1 | cut -d' ' -f2)
+  DL=/tmp/nvos-dl; mkdir -p "$DL"
+  PKG="$DL/$(basename "$URL")"
+  echo "downloading $(basename "$URL") ..."
+  curl -fL --retry 3 -o "$PKG" "$URL"
+  curl -fsSL --retry 3 -o "$PKG.md5" "$URL.md5" || { echo "no .md5 published for $(basename "$URL"); refusing to install an unchecked download"; exit 1; }
+}
+
 if [ -z "$PKG" ]; then
-  mapfile -t FOUND < <(find "$HERE" "$(dirname "$HERE")" -maxdepth 1 -type f -name "nvos-*-$KV-1.txz" 2>/dev/null)
+  FOUND=()
+  [ -z "$HERE" ] || mapfile -t FOUND < <(find "$HERE" "$(dirname "$HERE")" -maxdepth 1 -type f -name "nvos-${WANT_DRV:-*}-$KV-1.txz" 2>/dev/null)
   case ${#FOUND[@]} in
-    1) PKG=${FOUND[0]};;
-    0) echo "no nvos-*-$KV-1.txz in $HERE or its parent; this release does not match the running kernel $KV"
-       OTHER=$(find "$HERE" "$(dirname "$HERE")" -maxdepth 1 -type f -name "nvos-*.txz" 2>/dev/null)
-       [ -z "$OTHER" ] || { echo "found packages for other kernels:"; echo "$OTHER"; }
-       exit 1;;
+    1) PKG=${FOUND[0]}; echo "using $PKG";;
+    0) download_pkg;;
     *) echo "several packages for $KV found; pass the one to install:"; printf '  %s\n' "${FOUND[@]}"; exit 1;;
   esac
-  echo "using $PKG"
 fi
 
 [ -f "$PKG" ] || { echo "package file $PKG missing"; exit 1; }
